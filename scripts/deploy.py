@@ -9,11 +9,12 @@ import re
 import subprocess
 import sys
 import tempfile
+from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1] / "terraform"
-REGION = "us-east-1"
+REGION = "ap-southeast-2"
 BUDGET_TYPE = "aws_budgets_budget"
 MINIMUM_CREDITS = Decimal("20")
 
@@ -34,7 +35,11 @@ def command(args, profile=None, capture=False):
         TF_IN_AUTOMATION="1",
         CHECKPOINT_DISABLE="1",
     )
-    if profile is not None:
+    if profile is not None and args[0] == "terraform":
+        env.update(terraform_credentials(profile))
+        env["AWS_CONFIG_FILE"] = os.devnull
+        env["AWS_SHARED_CREDENTIALS_FILE"] = os.devnull
+    elif profile is not None:
         env["AWS_PROFILE"] = profile
 
     return subprocess.run(
@@ -77,6 +82,31 @@ def aws(operation, profile):
         profile=profile,
         capture=True,
     )
+
+
+def terraform_credentials(profile):
+    # Resolve source_profile with the AWS CLI, including aws login sessions.
+    raw = aws(["configure", "export-credentials", "--format", "process"], profile)
+    response = object_response(raw)
+    fields = {
+        "AWS_ACCESS_KEY_ID": response.get("AccessKeyId"),
+        "AWS_SECRET_ACCESS_KEY": response.get("SecretAccessKey"),
+        "AWS_SESSION_TOKEN": response.get("SessionToken"),
+    }
+    version = response.get("Version")
+    if not isinstance(version, Decimal) or version != 1 or not all(
+        isinstance(value, str) and value.strip() for value in fields.values()
+    ):
+        raise Blocked(f"Profile {profile} did not provide temporary AWS credentials.")
+
+    expires = response.get("Expiration")
+    try:
+        expiration = datetime.fromisoformat(expires.replace("Z", "+00:00"))
+    except (AttributeError, ValueError):
+        raise Blocked(f"Profile {profile} did not provide a valid AWS session expiration.") from None
+    if expiration.tzinfo is None or expiration <= datetime.now(timezone.utc):
+        raise Blocked(f"Profile {profile} did not provide an active AWS session.")
+    return fields
 
 
 def principal(profile, account):

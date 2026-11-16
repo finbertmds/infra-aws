@@ -1,5 +1,6 @@
 import copy
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -44,6 +45,51 @@ class CreditTests(unittest.TestCase):
                 deploy.verified_credits(json.dumps(dict(FREE, **{key: value})), ACCOUNT)
         with self.assertRaises(deploy.Blocked):
             deploy.verified_credits("not json", ACCOUNT)
+
+
+class CredentialHandoffTests(unittest.TestCase):
+    def test_terraform_uses_temporary_credentials_resolved_by_aws_cli(self):
+        credentials = {
+            "Version": 1,
+            "AccessKeyId": "fixture-key",
+            "SecretAccessKey": "fixture-secret",
+            "SessionToken": "fixture-token",
+            "Expiration": "2099-01-01T00:00:00Z",
+        }
+        for operation, profile in [("plan", "reader"), ("apply", "writer")]:
+            with self.subTest(operation=operation), patch.dict(
+                os.environ, {"AWS_ACCESS_KEY_ID": "unrelated-key", "AWS_PROFILE": "default"}
+            ), patch.object(deploy.subprocess, "run") as run:
+                run.side_effect = [
+                    subprocess.CompletedProcess([], 0, json.dumps(credentials)),
+                    subprocess.CompletedProcess([], 0),
+                ]
+                deploy.command(["terraform", operation], profile=profile)
+                export, terraform = run.call_args_list
+                self.assertEqual(export.args[0][:5], [
+                    "aws", "configure", "export-credentials", "--format", "process",
+                ])
+                self.assertEqual(export.kwargs["env"]["AWS_PROFILE"], profile)
+                self.assertNotIn("AWS_ACCESS_KEY_ID", export.kwargs["env"])
+                self.assertEqual(export.kwargs["stdout"], subprocess.PIPE)
+                self.assertEqual(terraform.args[0], ["terraform", operation])
+                env = terraform.kwargs["env"]
+                self.assertNotIn("AWS_PROFILE", env)
+                self.assertEqual(env["AWS_CONFIG_FILE"], os.devnull)
+                self.assertEqual(env["AWS_SHARED_CREDENTIALS_FILE"], os.devnull)
+                self.assertEqual(env["AWS_ACCESS_KEY_ID"], "fixture-key")
+                self.assertEqual(env["AWS_SECRET_ACCESS_KEY"], "fixture-secret")
+                self.assertEqual(env["AWS_SESSION_TOKEN"], "fixture-token")
+
+    def test_incomplete_credentials_block_before_terraform(self):
+        with patch.object(deploy.subprocess, "run") as run:
+            run.return_value = subprocess.CompletedProcess(
+                [], 0, '{"Version": 1, "AccessKeyId": "fixture-key"}'
+            )
+            with self.assertRaises(deploy.Blocked):
+                deploy.command(["terraform", "plan"], profile="reader")
+            self.assertEqual(run.call_count, 1)
+            self.assertEqual(run.call_args.args[0][:3], ["aws", "configure", "export-credentials"])
 
 
 class WorkflowTests(unittest.TestCase):
