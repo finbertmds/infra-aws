@@ -1,0 +1,23 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowRoleOperations",
+      "Effect": "Allow",
+      "Action": [
+        "freetier:GetAccountPlanState"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "DenyPlanUpgradePaths",
+      "Effect": "Deny",
+      "Action": [
+        "freetier:UpgradeAccountPlan",
+        "organizations:*",
+        "controltower:*"
+      ],
+      "Resource": "*"
+    }
+  ]
+}

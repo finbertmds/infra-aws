@@ -1,0 +1,25 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowRoleOperations",
+      "Effect": "Allow",
+      "Action": [
+        "budgets:ViewBudget",
+        "budgets:ListTagsForResource",
+        "budgets:ModifyBudget"
+      ],
+      "Resource": "arn:aws:budgets::ACCOUNT_ID:budget/monthly-cost-guardrail"
+    },
+    {
+      "Sid": "DenyPlanUpgradePaths",
+      "Effect": "Deny",
+      "Action": [
+        "freetier:UpgradeAccountPlan",
+        "organizations:*",
+        "controltower:*"
+      ],
+      "Resource": "*"
+    }
+  ]
+}
